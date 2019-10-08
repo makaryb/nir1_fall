@@ -39,7 +39,7 @@ dep_g: depth_gpu
 	./depth_gpu scene1.row3.col3.ppm scene1.row3.col1.ppm 28 10 14 1023 1 8
 
 dep_c: depth_cpu
-	./depth_cpu scene1.row3.col3.ppm scene1.row3.col1.ppm 28 10 14 1023 1 8
+	./depth_cpu im1.png im0.png 28 10 14 1023 1 8
 
 3d_g: 3d_gpu
 	./3d_gpu scene1.row3.col3.ppm scene1.row3.col1.ppm 28 10 14 1023 1
