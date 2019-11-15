@@ -1,8 +1,8 @@
 #include <opencv2/highgui/highgui.hpp>
 
 int main(int argc, const char** argv) {
-  cv::VideoCapture cap0(0);
-  cv::VideoCapture cap1(1);
+  cv::VideoCapture cap0(2);
+  cv::VideoCapture cap1(4);
   if (cap0.isOpened()) printf("right camera successfully opened\n");
   else               { printf("cannot open right camera\n"); return 1; }
   if (cap1.isOpened()) printf("left camera successfully opened\n");
