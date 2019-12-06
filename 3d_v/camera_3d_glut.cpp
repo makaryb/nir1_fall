@@ -3,7 +3,6 @@
 /********************************************************************/
 #include <stdio.h>
 #include <math.h>
-#include <GL/glew.h>
 #include <GL/freeglut.h>
 #include <opencv2/highgui/highgui.hpp>
 
@@ -17,15 +16,6 @@
 float look_at_r;
 float look_at_1;
 float look_at_2;
-
-struct vvv {
-  float x;
-  float y;
-  float z;
-  float r;
-  float g;
-  float b;
-};
 
 cv::Mat frame(YY, XX, CV_8UC3, cv::Scalar(0, 0, 0));
 cv::VideoCapture *cap;
@@ -43,14 +33,18 @@ void display(void) {
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   glEnable(GL_DEPTH_TEST);
   /*---------------------------*/
-  glEnableClientState(GL_VERTEX_ARRAY);
-  glEnableClientState(GL_COLOR_ARRAY);
-  glVertexPointer(3, GL_FLOAT, sizeof(vvv), NULL);
-  glColorPointer(3, GL_FLOAT, sizeof(vvv), (GLvoid *)(sizeof(float)*3));
   glPointSize(1);
-  glDrawArrays(GL_POINTS, 0, XX*YY);
-  glDisableClientState(GL_COLOR_ARRAY);
-  glDisableClientState(GL_VERTEX_ARRAY);
+  glBegin(GL_POINTS);
+  for (int hh = 0; hh < YY; hh++) {
+    for (int ww = 0; ww < XX; ww++) {
+      int h = hh - (YY/2);
+      int w = ww - (XX/2);
+      cv::Vec3b bgr = frame.at<cv::Vec3b>(hh, ww);
+      glColor3f((float)bgr[2]/255, (float)bgr[1]/255, (float)bgr[0]/255);
+      glVertex3f(0.0f, 0.001*w, -0.001*h);
+    }
+  }
+  glEnd();
   /*---------------------------*/
   glColor3f(1.0, 0.0, 0.0); glBegin(GL_LINES); glVertex3f(-1.0, 0.0, 0.0); glVertex3f(1.0, 0.0, 0.0); glEnd();
   glColor3f(0.0, 1.0, 0.0); glBegin(GL_LINES); glVertex3f( 0.0,-1.0, 0.0); glVertex3f(0.0, 1.0, 0.0); glEnd();
@@ -81,27 +75,8 @@ void keyboard(unsigned char key, int x, int y) {
   if (key == 'n') { look_at_r *= 0.9f; return; }
 }
 
-void picture(vvv *pos, int index) {
-  int hh  = index / XX;
-  int ww  = index % XX;
-  int h = hh - (YY/2);
-  int w = ww - (XX/2);
-  cv::Vec3b bgr = frame.at<cv::Vec3b>(hh, ww);
-  pos[index].x =  0.0f;
-  pos[index].y =  0.001*w;
-  pos[index].z = -0.001*h;
-  pos[index].r = (float)bgr[2]/255;
-  pos[index].g = (float)bgr[1]/255;
-  pos[index].b = (float)bgr[0]/255;
-}
-
 void idle(void) {
   *cap >> frame;
-  /*------------------------------*/
-  vvv *pos = (vvv *)glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
-  for (int index = 0; index < XX*YY; index++) picture(pos, index);
-  glUnmapBuffer(GL_ARRAY_BUFFER);
-  /*------------------------------*/
   glutPostRedisplay();
 }
 
@@ -112,7 +87,7 @@ int main(int argc, char** argv) {
   look_at_2 = LOOK_AT_2;
   /*------------------------------*/
   cap = new cv::VideoCapture;
-  cap->open(4);
+  cap->open(0);
   if (cap->isOpened()) printf("Camera Successfully Opened\n");
   else               { printf("Cannot Open Camera\n"); return 1; }
   /*------------------------------*/
@@ -120,25 +95,16 @@ int main(int argc, char** argv) {
   glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_DEPTH);
   glutInitWindowSize (2*XX, 2*YY);
   glutInitWindowPosition (390, 44);
-  glutCreateWindow("demo");
+  glutCreateWindow("K. OGURI 20180130");
   glutDisplayFunc(display);
   glutReshapeFunc(reshape);
   glutKeyboardFunc(keyboard);
   glutIdleFunc(idle);
   /*------------------------------*/
-  glewInit();
-  GLuint v_buf;
-  glGenBuffers(1, &v_buf);
-  glBindBuffer(GL_ARRAY_BUFFER, v_buf);
-  glBufferData(GL_ARRAY_BUFFER, (XX*YY)*sizeof(vvv), NULL, GL_DYNAMIC_DRAW);
-  /*------------------------------*/
   glClearColor(0.0, 0.0, 0.0, 1.0);
   glClearDepth(1.0);
   glutSetOption(GLUT_ACTION_ON_WINDOW_CLOSE, GLUT_ACTION_GLUTMAINLOOP_RETURNS);
   glutMainLoop();
-  /*------------------------------*/
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
-  glDeleteBuffers(1, &v_buf);
   /*------------------------------*/
   frame.release();
   cap->release();

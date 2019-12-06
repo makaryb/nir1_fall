@@ -1,0 +1,289 @@
+/********************************************************************/
+/***** GPU Graph Cut ************************************************/
+/********************************************************************/
+////////////////////////////////////////////////////
+// Copyright (c) 2018 Kiyoshi Oguri    2018.02.14 //
+// Released under the MIT license                 //
+// http://opensource.org/licenses/mit-license.php //
+////////////////////////////////////////////////////
+#include <stdio.h>
+#include <chrono>
+
+extern int cost(int S, int H, int W);
+extern void cut(int S, int H, int W);
+
+int LOOP = 1600;
+
+int SIZE_S;
+int SIZE_H;
+int SIZE_W;
+int SIZE_HW;
+int SIZE_SHW;
+
+__constant__ int size_s;
+__constant__ int size_h;
+__constant__ int size_w;
+__constant__ int size_hw;
+__constant__ int size_shw;
+
+uint *h_DAT;
+
+uint *d_DAT;
+
+__constant__ uint *DAT;
+
+size_t DAT_SIZE;
+
+#define M_HGT (0xffe00000)
+#define M_HDU (0x001c0000)
+#define M_WRL (0x00038000)
+#define M_SFB (0x00007f00)
+#define M_OVF (0x000000ff)
+
+#define S_HGT (21)
+#define S_HDU (18)
+#define S_WRL (15)
+#define S_SFB  (8)
+#define S_OVF  (0)
+
+#define U_HGT (~M_HGT)
+#define U_HDU (~M_HDU)
+#define U_WRL (~M_WRL)
+#define U_SFB (~M_SFB)
+#define U_OVF (~M_OVF)
+
+inline uint h_ADR(int SS, int HH, int WW) {
+  uint S = SS + 2;
+  uint H = HH + 4;
+  uint W = WW + 4;
+  uint ss  = S / 2;
+  uint sss = S % 2;
+  uint hh  = H / 4;
+  uint hhh = H % 4;
+  uint ww  = W / 4;
+  uint www = W % 4;
+  return ss*32*(SIZE_W/4+2)*(SIZE_H/4+2) + hh*32*(SIZE_W/4+2) + ww*32 + sss*16 + hhh*4 + www;
+}
+
+inline __device__ uint ADR(uint S, uint H, uint W) {
+  uint ss  = S / 2;
+  uint sss = S % 2;
+  uint hh  = H / 4;
+  uint hhh = H % 4;
+  uint ww  = W / 4;
+  uint www = W % 4;
+  return ss*32*(size_w/4+2)*(size_h/4+2) + hh*32*(size_w/4+2) + ww*32 + sss*16 + hhh*4 + www;
+}
+
+__device__ void push_e(uint &own, uint nS, uint nH, uint nW, uint D, uint ddd) {
+  uint nxt;
+  if (D==0) { nxt = __shfl_down_sync(0xffffffff, own, 16, 32); if (ddd==1) nxt = DAT[ADR(nS, nH, nW)]; }
+  if (D==2) { nxt = __shfl_down_sync(0xffffffff, own,  4, 32); if (ddd==3) nxt = DAT[ADR(nS, nH, nW)]; }
+  if (D==4) { nxt = __shfl_down_sync(0xffffffff, own,  1, 32); if (ddd==3) nxt = DAT[ADR(nS, nH, nW)]; }
+  uint Hgt = nxt>>S_HGT;
+  uint hgt = own>>S_HGT;
+  uint edg;
+  if (D==0) edg = (own&M_SFB)>>S_SFB;
+  if (D==2) edg = (own&M_HDU)>>S_HDU;
+  if (D==4) edg = (own&M_WRL)>>S_WRL;
+  uint ovf = own&M_OVF;
+  bool v = (Hgt>hgt)&&(edg>0);
+  bool q = edg>ovf;
+  uint pp = (v)? (q)? ovf: edg: 0;
+  uint qq;
+  if (D==0) { qq = __shfl_up_sync(0xffffffff, pp, 16, 32); if (ddd==0) qq = 0; }
+  if (D==2) { qq = __shfl_up_sync(0xffffffff, pp,  4, 32); if (ddd==0) qq = 0; }
+  if (D==4) { qq = __shfl_up_sync(0xffffffff, pp,  1, 32); if (ddd==0) qq = 0; }
+  if (!v&&(qq==0)) return;
+  if (v&&q) own = (own&U_HGT)|(Hgt<<S_HGT);
+  if (pp>0) {
+    if (D==0) { own -= (pp<<S_SFB)+pp; if (ddd==1) DAT[ADR(nS, nH, nW)] = nxt+pp; }
+    if (D==2) { own -= (pp<<S_HDU)+pp; if (ddd==3) DAT[ADR(nS, nH, nW)] = nxt+pp; }
+    if (D==4) { own -= (pp<<S_WRL)+pp; if (ddd==3) DAT[ADR(nS, nH, nW)] = nxt+pp; }
+  }
+  if (qq>0) own += qq;
+}
+
+__device__ void push_o(uint &own, uint nS, uint nH, uint nW, uint D, uint ddd) {
+  uint nxt;
+  if (D==1) { nxt = __shfl_up_sync(0xffffffff, own,  4, 32); if (ddd == 0) nxt = DAT[ADR(nS, nH, nW)]; }
+  if (D==3) { nxt = __shfl_up_sync(0xffffffff, own,  1, 32); if (ddd == 0) nxt = DAT[ADR(nS, nH, nW)]; }
+  if (D==5) { nxt = __shfl_up_sync(0xffffffff, own, 16, 32); if (ddd == 0) nxt = DAT[ADR(nS, nH, nW)]; }
+  uint Hgt = nxt>>S_HGT;
+  uint hgt = own>>S_HGT;
+  uint Edg;
+  if (D==1) Edg = (nxt&M_HDU)>>S_HDU;
+  if (D==3) Edg = (nxt&M_WRL)>>S_WRL;
+  if (D==5) Edg = (nxt&M_SFB)>>S_SFB;
+  uint ovf = own&M_OVF;
+  uint edg;
+  if (D==1) edg = 6-Edg;
+  if (D==3) edg = 6-Edg;
+  if (D==5) edg = 127-Edg;
+  bool v = (Hgt>hgt)&&(edg>0);
+  bool q = edg>ovf;
+  uint pp = (v)? (q)? ovf: edg: 0;
+  uint qq;
+  if (D==1) { qq = __shfl_down_sync(0xffffffff, pp,  4, 32); if (ddd==3) qq = 0; }
+  if (D==3) { qq = __shfl_down_sync(0xffffffff, pp,  1, 32); if (ddd==3) qq = 0; }
+  if (D==5) { qq = __shfl_down_sync(0xffffffff, pp, 16, 32); if (ddd==1) qq = 0; }
+  if (!v&&(qq==0)) return;
+  if (v&&q) own = (own&U_HGT)|(Hgt<<S_HGT);
+  if (pp>0) {
+    own -= pp;
+    if (D==1) if(ddd==0) DAT[ADR(nS, nH, nW)] = nxt+(pp<<S_HDU)+pp;
+    if (D==3) if(ddd==0) DAT[ADR(nS, nH, nW)] = nxt+(pp<<S_WRL)+pp;
+    if (D==5) if(ddd==0) DAT[ADR(nS, nH, nW)] = nxt+(pp<<S_SFB)+pp;
+  }
+  if (qq>0) {
+    if (D==1) own += (qq<<S_HDU)+qq;
+    if (D==3) own += (qq<<S_WRL)+qq;
+    if (D==5) own += (qq<<S_SFB)+qq;
+  }
+}
+
+__global__ void wave(uint hh0, uint hh1, uint ww0, uint ww1) {
+  ///////////////////////////////
+  uint SS = blockIdx.z;
+  uint H1 = blockIdx.y;
+  uint W1 = blockIdx.x;
+  uint H2 = threadIdx.z;
+  uint W2 = threadIdx.y;
+  uint PP = threadIdx.x;
+  ///////////////////////////////
+  uint HH = H1 * 2 + H2;
+  uint WW = W1 * 4 + W2;
+  uint ss = SS % 2;
+  uint hh = (ss)? hh1: hh0;
+  uint ww = (ss)? ww1: ww0;
+  uint sss = (PP     ) >> 4;
+  uint hhh = (PP & 12) >> 2;
+  uint www = (PP &  3);
+  uint S = 2 * SS      + sss + 2;
+  uint H = 8 * HH + hh + hhh + 4;
+  uint W = 8 * WW + ww + www + 4;
+  ///////////////////////////////
+  uint own = DAT[ADR(S, H, W)];
+  push_e(own, S+1, H, W, 0, sss);
+  push_e(own, S, H, W+1, 4, www);
+  push_o(own, S, H, W-1, 3, www);
+  push_e(own, S, H+1, W, 2, hhh);
+  push_o(own, S, H-1, W, 1, hhh);
+  push_o(own, S-1, H, W, 5, sss);
+  DAT[ADR(S, H, W)] = own;
+}
+
+__global__ void time_set(uint time) {
+  ///////////////////////////////
+  uint sa = blockDim.x * blockIdx.x + threadIdx.x;
+  uint H  = sa / size_w;
+  uint W  = sa % size_w;
+  ///////////////////////////////
+  DAT[ADR(size_s+2, H+4, W+4)] = (DAT[ADR(size_s+2, H+4, W+4)]&U_HGT)|(time<<S_HGT);
+}
+
+void wave_cut(uint loop) {
+  dim3 grid(SIZE_W/32, SIZE_H/16, SIZE_S/2);
+  dim3 block(32, 4, 2);
+  for (uint time = 1; time <= loop; time++) {
+    time_set<<< SIZE_HW/256, 256 >>>(time);
+    wave<<< grid, block >>>(0, 4, 0, 4);
+    wave<<< grid, block >>>(0, 4, 4, 0);
+    wave<<< grid, block >>>(4, 0, 0, 4);
+    wave<<< grid, block >>>(4, 0, 4, 0);
+  }
+}
+
+void data_set(int penalty_w, int penalty_h, int inhibit_a, int inhibit_b) {
+  for (int H = 0; H < SIZE_H; H++) {
+    for (int W = 0; W < SIZE_W; W++) {
+      h_DAT[h_ADR(-1, H, W)] = 127<<S_SFB;
+      for (int S = 0; S < SIZE_S; S++) {
+        ///////////////////////////////
+        h_DAT[h_ADR(S, H, W)] = 0;
+        ///////////////////////////////
+                         h_DAT[h_ADR(S, H, W)] = (cost(S+1, H, W)/6)<<S_SFB;
+        if (S==0)        h_DAT[h_ADR(S, H, W)] += cost(S,   H, W)/6;
+        if (H!=SIZE_H-1) h_DAT[h_ADR(S, H, W)] += 3<<S_HDU;
+        if (W!=SIZE_W-1) h_DAT[h_ADR(S, H, W)] += 3<<S_WRL;
+      }
+      h_DAT[h_ADR(SIZE_S, H, W)] = 0;
+    }
+  }
+  for (int W = 0; W < SIZE_W; W++) {
+    for (int S = 0; S < SIZE_S; S++) {
+      h_DAT[h_ADR(S, -1, W)] = 6<<S_HDU;
+      h_DAT[h_ADR(S, SIZE_H, W)] = 0;
+    }
+  }
+  for (int H = 0; H < SIZE_H; H++) {
+    for (int S = 0; S < SIZE_S; S++) {
+      h_DAT[h_ADR(S, H, -1)] = 6<<S_WRL;
+      h_DAT[h_ADR(S, H, SIZE_W)] = 0;
+    }
+  }
+  cudaMemcpy(d_DAT, h_DAT, DAT_SIZE, cudaMemcpyHostToDevice);
+}
+
+int sink_chk(void) {
+  cudaMemcpy(h_DAT, d_DAT, DAT_SIZE, cudaMemcpyDeviceToHost);
+  int total = 0;
+  for (int H = 0; H < SIZE_H; H++) {
+    for (int W = 0; W < SIZE_W; W++) {
+      total += h_DAT[h_ADR(SIZE_S, H, W)]&M_OVF;
+    }
+  }
+  return total;
+}
+
+void dep_set(void) {
+  cudaMemcpy(h_DAT, d_DAT, DAT_SIZE, cudaMemcpyDeviceToHost);
+  for (int H = 0; H < SIZE_H; H++) {
+    for (int W = 0; W < SIZE_W; W++) {
+      for (int S = SIZE_S; S >= 0; S--) {
+        if (S == 0) cut(S, H, W);
+        else {
+          uint aa = h_DAT[h_ADR(S, H, W)]>>S_HGT;
+          uint bb = h_DAT[h_ADR(S-1, H, W)]>>S_HGT;
+          if (aa > bb) {
+            if (aa - bb > LOOP/10) {
+              cut(S, H, W);
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+int graph_cut(int penalty_w, int penalty_h, int inhibit_a, int inhibit_b) {
+  printf("S-H-W=%d-%d-%d LOOP=%d\n", SIZE_S, SIZE_H, SIZE_W, LOOP);
+  if (SIZE_S% 4) { printf("ERROR! SIZE_S must be the integer multiole of 4\n"); return 0; }
+  if (SIZE_H%16) { printf("ERROR! SIZE_H must be the integer multiole of 16\n"); return 0; }
+  if (SIZE_W%32) { printf("ERROR! SIZE_W must be the integer multiole of 32\n"); return 0; }
+  cudaMemcpyToSymbol(size_s,   &SIZE_S,   sizeof(int));
+  cudaMemcpyToSymbol(size_h,   &SIZE_H,   sizeof(int));
+  cudaMemcpyToSymbol(size_w,   &SIZE_W,   sizeof(int));
+  cudaMemcpyToSymbol(size_hw,  &SIZE_HW,  sizeof(int));
+  cudaMemcpyToSymbol(size_shw, &SIZE_SHW, sizeof(int));
+  DAT_SIZE = sizeof(uint) * (SIZE_S+4)*(SIZE_H+8)*(SIZE_W+8);
+  h_DAT = new uint[(SIZE_S+4)*(SIZE_H+8)*(SIZE_W+8)];
+  cudaMalloc((void **)&d_DAT, DAT_SIZE);
+  cudaMemcpyToSymbol(DAT, &d_DAT, sizeof(uint*));
+  data_set(penalty_w, penalty_h, inhibit_a, inhibit_b);
+  //---------------------------//
+  auto start = std::chrono::system_clock::now();
+  wave_cut(LOOP);
+  auto end = std::chrono::system_clock::now();
+  auto dur = end - start;
+  int usec = std::chrono::duration_cast<std::chrono::microseconds>(dur).count();
+  printf("wave time = %dus\n", usec);
+  int flow = sink_chk();
+  printf("wave flow = %d\n", flow);
+  //---------------------------//
+  dep_set();
+  cudaFree(d_DAT);
+  delete [] h_DAT;
+  return flow;
+}

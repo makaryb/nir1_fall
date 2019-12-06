@@ -1,7 +1,7 @@
 #include <opencv2/highgui/highgui.hpp>
 
 int main(int argc, char** argv) {
-  cv::VideoCapture cap0(1);
+  cv::VideoCapture cap0(0);
   if (cap0.isOpened()) printf("camera successfully opened\n");
   else               { printf("cannot open camera\n"); return 1; }
   cv::namedWindow("image0", cv::WINDOW_AUTOSIZE);

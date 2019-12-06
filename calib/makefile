@@ -5,12 +5,11 @@
 #////////////////////////////////////////////////////
 
 CFLAGS = -std c++11 -arch sm_30 -O3 -lm -lglut -lGLU -lGL `pkg-config opencv --cflags --libs`
-LFLAGS = -O3 `pkg-config opencv --cflags --libs`
-LIBRARIES += -lopencv_core -lopencv_highgui -lopencv_videoio
+LFLAGS =                        -O3                       `pkg-config opencv --cflags --libs`
 
 .SUFFIXES:
 
-all: calib_png calib_cam
+all: rectify calib_png calib_cam depth_gpu
 
 #////////////////////////////////////////////////////
 rec: rectify
@@ -44,10 +43,10 @@ rectify:       rectify.cpp graph_cut.cu makefile
 	nvcc -o $@ rectify.cpp graph_cut.cu $(CFLAGS)
 
 calib_png:    calib_png.cpp calib.cpp makefile
-	g++ -o $@ calib_png.cpp calib.cpp $(LFLAGS) $(LIBRARIES)
+	g++ -o $@ calib_png.cpp calib.cpp $(LFLAGS)
 
 calib_cam:    calib_cam.cpp calib.cpp makefile
-	g++ -o $@ calib_cam.cpp calib.cpp $(LFLAGS) $(LIBRARIES)
+	g++ -o $@ calib_cam.cpp calib.cpp $(LFLAGS)
 
 depth_gpu:     depth_stereo.cpp graph_cut.cu makefile
 	nvcc -o $@ depth_stereo.cpp graph_cut.cu $(CFLAGS)

@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
   look_at_2 = LOOK_AT_2;
   /*------------------------------*/
   cap = new cv::VideoCapture;
-  cap->open(4);
+  cap->open(0);
   if (cap->isOpened()) printf("Camera Successfully Opened\n");
   else               { printf("Cannot Open Camera\n"); return 1; }
   /*------------------------------*/
@@ -120,7 +120,7 @@ int main(int argc, char** argv) {
   glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_DEPTH);
   glutInitWindowSize (2*XX, 2*YY);
   glutInitWindowPosition (390, 44);
-  glutCreateWindow("demo");
+  glutCreateWindow("K. OGURI 20180130");
   glutDisplayFunc(display);
   glutReshapeFunc(reshape);
   glutKeyboardFunc(keyboard);
